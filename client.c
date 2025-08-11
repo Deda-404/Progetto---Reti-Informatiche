@@ -4,12 +4,11 @@
 //
 // Funzioni chiave:
 //  - Menu principale con nickname preservato tra sessioni (Invio = conferma)
-//  - Selezione temi con uscita (0), comando "Mostra Punteggio", storico locale
+//  - Selezione temi dei quiz con numero corrispondente (n)
+//  - Comando "Mostra Punteggio", classifica player OnLine
 //  - Quiz a domande con input robusto e invio in buffer azzerato
-//  - Classifiche online formattate
 //  - Rilevamento immediato shutdown server (select su stdin+socket)
 //  - Persistenza in-memoria (per nickname) dei temi già svolti anche se torni al menu
-//  - Commenti densi e chiari per ogni funzione e punti non ovvi
 //
 // ============================================================================
 
@@ -27,7 +26,9 @@
 
 // ---------------------------- Protocollo (client->server) ---------------------
 // NB: lato server l’handler decodifica così:
-//  0 = end session, 1 = show score, >=3 tema scelto (temaIdx = cmd - 3)
+//  0 = end session, 
+//  1 = show score, 
+//  >=3 tema scelto (temaIdx = cmd - 3)
 #define CMD_END         0
 #define CMD_SHOW        1
 #define CMD_THEME_BASE  3   // manda: CMD_THEME_BASE + (idTema - 1)
@@ -48,7 +49,7 @@ struct Completato {
     struct Completato* next;
 };
 
-// Persistenza minima **per nickname**: bitmask dei temi già completati
+// Persistenza minima per nickname: bitmask dei temi già completati
 // (resta valida finché non chiudi il programma client)
 struct Profilo {
     char          nick[MaxUsernameL];
@@ -71,12 +72,15 @@ static void nota_dim(const char* s) { printf(COL_DIM  "%s" COL_RST "\n", s); }
 // Trim robusto: toglie spazi/TAB e CR/LF a sinistra e destra
 static void trim(char* s){
     if(!s) return;
+
     // left trim
     size_t i = 0; while (s[i]==' '||s[i]=='\t'||s[i]=='\r'||s[i]=='\n') i++;
     if (i) memmove(s, s+i, strlen(s+i)+1);
+
     // right trim
     size_t n = strlen(s);
     while (n>0 && (s[n-1]==' '||s[n-1]=='\t'||s[n-1]=='\r'||s[n-1]=='\n')) s[--n] = '\0';
+
 }
 
 // ---------------------------- Lettura input (2 varianti) ----------------------
@@ -84,7 +88,7 @@ static void trim(char* s){
 // 1) leggiLinea(): uso semplice (solo stdin), rifiuta vuote
 // 2) leggiLinea_reactive(): I/O reattivo con select() su stdin + socket
 //    - se il server chiude mentre attendo input, appare subito il messaggio
-//    - se default_nick != NULL, Invio vuoto lo accetta (comodissimo al login)
+//    - se default_nick != NULL, Invio vuoto lo accetta (Utile per il login)
 // -----------------------------------------------------------------------------
 
 static int leggiLinea(const char* prompt, char* buf, int maxLen){
@@ -107,7 +111,9 @@ static int leggiLinea(const char* prompt, char* buf, int maxLen){
     }
 }
 
-// Ritorni:  1 ok, 0 EOF stdin, -2 server spento (setta g_server_spento)
+//  Ritorni:  1 ok, 
+//  0 EOF stdin, 
+//  -2 server spento (setta g_server_spento)
 static int leggiLinea_reactive(int sd, const char* prompt, char* buf, int maxLen,
                                const char* default_nick /*accettato con Invio|NULL no default*/)
 {
@@ -185,7 +191,9 @@ static struct Tema* estraiTema(struct Tema** head, int id){
 static void aggiungiCompletato(struct Completato** s, const char* nome, unsigned int punti){
     struct Completato* n = (struct Completato*)malloc(sizeof(*n));
     strncpy(n->nomeTema, nome, MaxReadL); n->nomeTema[MaxReadL-1] = '\0';
-    n->punti = punti; n->next = *s; *s = n;
+    n->punti = punti; 
+    n->next = *s; 
+    *s = n;
 }
 static void liberaCompletati(struct Completato* s){ while(s){ struct Completato* t=s; s=s->next; free(t);} }
 
@@ -195,7 +203,8 @@ static struct Profilo* get_profilo(const char* nick){
         if (strncmp(p->nick, nick, MaxUsernameL)==0) return p;
     struct Profilo* n = (struct Profilo*)calloc(1,sizeof(*n));
     strncpy(n->nick, nick, MaxUsernameL); n->nick[MaxUsernameL-1]='\0';
-    n->next = g_profili; g_profili = n;
+    n->next = g_profili; 
+    g_profili = n;
     return n;
 }
 
@@ -326,7 +335,8 @@ static int sessioneQuiz(int sd){
         ret = RecErr(ret, MaxReadL);
         if (ret){ if (ret<0) perror("recv tema"); serverSpento_print(); liberaTemi(temi); return 1; }
 
-        // se già completato per questo nick, NON lo mostriamo più tra i selezionabili
+        // Se già completato per questo nick
+        // NON si vede più tra i selezionabili
         if (prof && (prof->mask_done & (1u << (i-1)))) continue;
 
         struct Tema* n = (struct Tema*)malloc(sizeof(*n));
@@ -335,7 +345,7 @@ static int sessioneQuiz(int sd){
         if (!temi) temi = n; else last->next = n; last = n;
     }
 
-    // (4) Storico locale dei quiz svolti (solo per questa sessione)
+    // (4) Storico locale dei quiz svolti (solo per singola sessione)
     struct Completato* stor = NULL;
 
     // (5) Scelta dei temi + quiz
@@ -399,7 +409,7 @@ static int sessioneQuiz(int sd){
                 continue;
             }
             if (!strcmp(risposta, EndQuiz)) {
-                // Torna al menu: il server chiuderà la sessione (lo abbiamo indicato come risposta)
+                // Torna al menu: il server chiude la sessione (é indicato come risposta)
                 free(t); liberaTemi(temi); liberaCompletati(stor);
                 return 0;
             }
@@ -411,7 +421,7 @@ static int sessioneQuiz(int sd){
                 perror("send risposta"); free(t); liberaTemi(temi); liberaCompletati(stor); return 1;
             }
 
-            // ricevo esito (0=corretta, 1=errata) – coerente col server
+            // ricevo esito (0=corretta, 1=errata)
             ret = recv(sd, &net, sizeof(net), MSG_WAITALL);
             ret = RecErr(ret, sizeof(net));
             if (ret){ if (ret<0) perror("recv esito"); serverSpento_print(); free(t); liberaTemi(temi); liberaCompletati(stor); return 1; }
@@ -422,7 +432,7 @@ static int sessioneQuiz(int sd){
             else            { printf(COL_ERR "ERRATA"   COL_RST "\n"); }
         }
 
-        // quiz finito: aggiungi allo storico locale, segna completato nel profilo e mostra sommario
+        // quiz finito: metto storico locale, segno completato nel profilo e mostro sommario
         if (prof) prof->mask_done |= (1u << (t->id - 1));
         aggiungiCompletato(&stor, t->nome, corrette);
         printf("\nHai concluso '%s' con punteggio: " COL_BOLD "%u/%d" COL_RST "\n",
@@ -435,8 +445,8 @@ static int sessioneQuiz(int sd){
 int main(int argc, char* argv[]){
     if (argc != 2) { printf("Uso: %s <porta>\n", argv[0]); return -1; }
     int porta = atoi(argv[1]);
-    if (porta < 1024 || porta > 49151) {
-        printf("Porta non valida (1024..49151)\n"); return -1;
+    if (porta != 4242) {
+        printf("Porta non valida (Usa 4242)\n"); return -1;
     }
 
     struct sockaddr_in srv; memset(&srv, 0, sizeof(srv));
@@ -450,16 +460,17 @@ int main(int argc, char* argv[]){
         // Se il server è spento, consenti solo “2) Esci”
         char sc[8];
         if (g_server_spento) {
-            nota_dim("(Il server è offline: puoi solo uscire.)");
-            printf("2) Esci\n"); riga();
+            nota_dim("\n(Il server è offline: puoi solo uscire.)\n");
+            printf("2) Esci\n\n"); 
+            riga();
             if (!leggiLinea("Scelta", sc, sizeof(sc))) return -1;
-            if (atoi(sc) == 2) { printf("Torna presto a Giocare!\n"); return 0; }
+            if (atoi(sc) == 2) { printf("\nTorna presto a Giocare!\n\n"); return 0; }
             continue;
         }
 
         if (!leggiLinea("Scelta", sc, sizeof(sc))) return -1;
         int op = atoi(sc);
-        if (op == 2) { printf("Torna presto a Giocare!\n"); return 0; }
+        if (op == 2) { printf("\nTorna presto a Giocare!\n\n"); return 0; }
         if (op != 1)  continue;
 
         int sd = socket(AF_INET, SOCK_STREAM, 0);

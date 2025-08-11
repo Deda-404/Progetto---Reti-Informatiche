@@ -1,9 +1,11 @@
 // ============================================================================
 // Autore: de Dato A. – Matricola: 635256
+//
 // SERVER – Quiz a temi con:
 //  - Stampa stato (test disponibili, utenti online con test svolti, classifiche)
 //  - Classifiche ordinate per punteggio e, a parità, per tempo di completamento
 //  - Shutdown controllato da tastiera: premere 'Q' + Invio per spegnere il server
+//
 // ============================================================================
 
 #include "utility.h"      // costanti, tipi e utility comuni
@@ -40,11 +42,11 @@ struct GiocatoreStato {
  *  - nick:   COPIA del nickname (decoupling dagli slot online)
  */
 struct NodoPunteggio {
-    unsigned int           punteggio;     // risposte corrette accumulate
-    time_t                 finito;        // istante di fine quiz (per il tie-break)
+    unsigned int           punteggio;           // risposte corrette accumulate
+    time_t                 finito;              // istante di fine quiz (per il tie-break)
     char                   nick[MaxUsernameL];
-    struct NodoPunteggio*  prev;          // nodo precedente
-    struct NodoPunteggio*  nxt;           // nodo successivo
+    struct NodoPunteggio*  prev;                // nodo precedente
+    struct NodoPunteggio*  nxt;                 // nodo successivo
 };
 
 /*
@@ -78,36 +80,38 @@ struct TemaQuiz {
 
 // ==================== Variabili Globali ====================
 
-static int                   sd_ascolto;             // socket di ascolto
-static int                   numTemi = 0;           // numero di file .txt in qa/
-static struct TemaQuiz*      temiQuiz   = NULL;     // vettore dinamico dei temi
-static struct Tabellone*     tabelloni  = NULL;     // classifica per ciascun tema
-static struct GiocatoreStato giocatori[MAX_THREAD]; // 1 slot per thread
+static int                   sd_ascolto;                // socket di ascolto
+static int                   numTemi = 0;               // numero di file .txt in qa/
+static struct TemaQuiz*      temiQuiz   = NULL;         // vettore dinamico dei temi
+static struct Tabellone*     tabelloni  = NULL;         // classifica per ciascun tema
+static struct GiocatoreStato giocatori[MAX_THREAD];     // 1 slot per thread
 
-// Sincronizzazione “stampa stato” (richiesta dai worker)
+// Sincronizzazione “stampa stato”
 static pthread_mutex_t mtx_score;
 static pthread_cond_t  cond_score;
-static int             flag_stampa = 0;             // 0 = nessuna richiesta; 1 = richiesta attiva
+static int             flag_stampa = 0;                 // 0 = nessuna richiesta 
+                                                        // 1 = richiesta attiva
 
 // Protezioni varie
-static pthread_mutex_t mtx_sd;       // serialize accept() tra i thread
-static pthread_mutex_t mtx_players;  // protezione array giocatori[]
+static pthread_mutex_t mtx_sd;                  // serialize accept() tra i thread
+static pthread_mutex_t mtx_players;             // protezione array giocatori[]
 
 // ---- Shutdown controllato (premi 'Q' + Invio) ----
-static atomic_int server_shutdown = 0;   // 0=on, 1=shutdown richiesto
+static atomic_int server_shutdown = 0;          // 0=on 
+                                                // 1=shutdown
 
 // Tracciamento connessioni attive per chiusura pulita (spegnimento)
-static int            conn_sd_list[MAX_THREAD]; // -1 = libero, altrimenti sd attivo
+static int            conn_sd_list[MAX_THREAD];             // -1 = libero, altrimenti sd attivo
 static pthread_mutex_t mtx_conns;
 
 // ==================== Prototipi ====================
 static void* threadConnessione(void* arg);
 static void  gestisciConnessione(int conn_sd, struct GiocatoreStato* gioc);
 
-static int   verificaRicezione(int ret, int len); // helper robusto su recv()
+static int   verificaRicezione(int ret, int len);           // helper, robusto su recv()
 static void  normalizza(const char* in, char* out, size_t cap);
 
-static void  inviaClassifica(int conn_sd);        // show-score (protocollo)
+static void  inviaClassifica(int conn_sd);                  // show-score
 static void  inviaPunteggiRicorsivo(struct NodoPunteggio* n, int conn_sd, int* cont);
 
 static int   caricaDomande(const char* percorso, struct CoppiaQ* quiz);
@@ -118,9 +122,9 @@ static void  stampaSezioneOnline(void);
 static void  stampaSezioneClassifiche(void);
 static void  stampaStato(void);
 
-static void* consoleWatcher(void*);               // thread che attende 'Q' su stdin
+static void* consoleWatcher(void*);                         // thread che attende 'Q' su stdin
 
-// Rimozione completa del nickname da *tutte* le classifiche (usata su uscita)
+// Rimozione completa del nickname da *tutte* le classifiche
 static void  rimuovi_dalle_classifiche(const char* nick);
 
 // ============================================================================
@@ -139,12 +143,15 @@ int main() {
     // --- 2) Caricamento domande da file -------------------------------
     char path[MaxReadQuestL + sizeof(QA_FOLDER)];
     for (int i = 0; i < numTemi; i++) {
+
         // path "qa/<nome>.txt"
         snprintf(path, sizeof(path), "%s%s.txt", QA_FOLDER, temiQuiz[i].nome);
+
         if (caricaDomande(path, temiQuiz[i].quiz) < 0) {
             fprintf(stderr, "[ERR] lettura domande fallita: %s\n", path);
             return -1;
         }
+
     }
 
     // --- 3) Socket di ascolto -----------------------------------------
@@ -196,8 +203,11 @@ int main() {
     while (1) {
         // attesa richiesta di refresh (alzata dai worker)
         pthread_mutex_lock(&mtx_score);
+
         while (!flag_stampa) pthread_cond_wait(&cond_score, &mtx_score);
-        flag_stampa = 0; // consumo richiesta
+
+        flag_stampa = 0;                           // consumo richiesta
+
         pthread_mutex_unlock(&mtx_score);
 
         // stampa le tre sezioni richieste
@@ -228,7 +238,7 @@ static void* threadConnessione(void* arg) {
             continue;
         }
 
-        // registra la connessione per chiusura gentile allo shutdown
+        // registra la connessione per chiusura "gentile" allo shutdown
         pthread_mutex_lock(&mtx_conns);
         conn_sd_list[idx] = conn_sd;
         pthread_mutex_unlock(&mtx_conns);
@@ -255,14 +265,14 @@ static void* threadConnessione(void* arg) {
 // - Ignora TUTTI i whitespace.
 // - Ignora caratteri non-ASCII (es. apostrofo tipografico ’, lettere accentate).
 // - Ignora punteggiatura e simboli vari: conserva solo [a-z0-9].
-// Questo evita mismatch tra 'L'Attacco...' e 'L’Attacco...' o spazi/punteggiatura.
+// Serve tutto a evitare i mismatch per piccolezze o spazi o punteggiatura.
 // ============================================================================
 static void normalizza(const char* in, char* out, size_t cap) {
     size_t k = 0;
     for (const unsigned char* p = (const unsigned char*)in; *p && k + 1 < cap; ++p) {
         unsigned char c = *p;
         if (isspace(c)) continue;                 // ignora spazi/TAB/CR/LF
-        if (c & 0x80) continue;                   // ignora byte non-ASCII (UTF-8, accenti, ’, ecc.)
+        if (c & 0x80) continue;                   // ignora byte non-ASCII
         c = (unsigned char)tolower(c);
         if (isalnum(c)) out[k++] = (char)c;       // tieni solo [a-z0-9]
     }
@@ -333,14 +343,15 @@ static void gestisciConnessione(int conn_sd, struct GiocatoreStato* gioc) {
 
     // --- (4) ciclo di gioco -------------------------------------------
     while (1) {
-        // ricevo comando: 0=end, 1=showscore, >=3 selezione tema
+        // ricevo comando: 0=end 
+        // 1=showscore
+        // >=3 selezione tema
         ret = recv(conn_sd, &netNum, sizeof(netNum), MSG_WAITALL);
         if (verificaRicezione(ret, sizeof(netNum)) != 0) goto fine;
         int cmd = ntohs(netNum);
 
+        // Fine sessione: esci dal loop.
         if (cmd == 0) {
-            // Fine sessione: esci dal loop. (NON cancelliamo la classifica qui;
-            // la rimozione avverrà alla chiusura della connessione, in 'fine'.)
             break;
         }
         if (cmd == 1) {
@@ -389,15 +400,16 @@ static void gestisciConnessione(int conn_sd, struct GiocatoreStato* gioc) {
             if (strcmp(buffer, ShowScore) == 0) { inviaClassifica(conn_sd); q--; continue; }
             if (strcmp(buffer, EndQuiz)   == 0) { goto fine; }
 
-            // confronto risposta: normalizzazione più robusta (vedi normalizza)
+            // confronto risposta: normalizzazione più robusta (vedi sopra normalizza)
             char attesa[MaxReadL];  char ricevuta[MaxReadL];
             normalizza(temiQuiz[temaIdx].quiz[q].risposta, attesa,   sizeof(attesa));
             normalizza(buffer,                              ricevuta, sizeof(ricevuta));
 
-            int esito = strcmp(ricevuta, attesa); // 0 = corretta
+            int esito = strcmp(ricevuta, attesa);       // 0 = corretta
 
             if (esito == 0) {
-                // +1 punto e “bubble up” nella classifica, con tie-break sul tempo quando disponibile
+                // +1 punto e “bubble up” nella classifica
+                // con tie-break sul tempo quando necessario
                 pthread_mutex_lock(&tabelloni[temaIdx].lock);
                 nodo->punteggio++;
 
@@ -432,7 +444,7 @@ static void gestisciConnessione(int conn_sd, struct GiocatoreStato* gioc) {
             send(conn_sd, &netNum, sizeof(netNum), MSG_NOSIGNAL);
         }
 
-        // quiz terminato: marca timestamp di fine e riordina per tie-break (solo se parità di punteggio)
+        // quiz terminato: timestamp di fine, riordina per tie-break (parità di punteggio)
         pthread_mutex_lock(&tabelloni[temaIdx].lock);
         nodo->finito = time(NULL);                  // istante di fine
         while (nodo->nxt &&
@@ -467,7 +479,7 @@ static void gestisciConnessione(int conn_sd, struct GiocatoreStato* gioc) {
     }
 
 fine:
-    // Cleanup finale: liberiamo lo slot online e rimuoviamo il nick da tutte le classifiche.
+    // Cleanup finale: libero slot online e cancello il nick da tutte le classifiche.
     pthread_mutex_lock(&mtx_players);
     gioc->nome[0]  = '\0';
     gioc->temaCorr = NULL;
@@ -486,9 +498,9 @@ fine:
 // verificaRicezione
 // ============================================================================
 static int verificaRicezione(int ret, int len) {
-    if (ret == 0)             return 1;   // peer chiuso
-    if (ret < 0 || ret < len) return -1;  // errore/parziale
-    return 0;                              // OK
+    if (ret == 0)             return 1;         // peer chiuso
+    if (ret < 0 || ret < len) return -1;        // errore/parziale
+    return 0;                                   // OK
 }
 
 // ============================================================================
@@ -497,11 +509,11 @@ static int verificaRicezione(int ret, int len) {
 static void inviaPunteggiRicorsivo(struct NodoPunteggio* n, int conn_sd, int* cont) {
     if (!n) {
         uint16_t net = htons(*cont);
-        send(conn_sd, &net, sizeof(net), MSG_NOSIGNAL); // invio numero giocatori
+        send(conn_sd, &net, sizeof(net), MSG_NOSIGNAL);         // invio numero giocatori
         return;
     }
     (*cont)++;
-    inviaPunteggiRicorsivo(n->nxt, conn_sd, cont); // invio dal peggiore al migliore
+    inviaPunteggiRicorsivo(n->nxt, conn_sd, cont);              // invio dal peggiore al migliore
     send(conn_sd, n->nick, MaxReadL, MSG_NOSIGNAL);
     uint16_t net = htons(n->punteggio);
     send(conn_sd, &net, sizeof(net), MSG_NOSIGNAL);
@@ -542,8 +554,8 @@ static void rimuovi_dalle_classifiche(const char* nick) {
 // I/O file: costruisciIndice / caricaDomande
 // ----------------------------------------------------------------------------
 // Scansione 'qa/' per contare i file .txt, allocare gli array e popolare i nomi.
-// Lettura domande **a coppie di righe**:
-//    riga dispari  -> Domanda (terminante in '?', ma non è obbligatorio forzarlo)
+// Lettura domande a coppie di righe:
+//    riga dispari  -> Domanda (terminante in '?')
 //    riga pari     -> Risposta
 // CR/LF safe, trim di coda/spazi e tolleranza a linee vuote accidentali.
 // ============================================================================
@@ -570,10 +582,10 @@ static int costruisciIndice(void) {
     while ((ent = readdir(dir))) {
         char* pos;
         if ((pos = strstr(ent->d_name, ".txt"))) {
-            *pos = '\0'; // rimuovo estensione
+            *pos = '\0';                                        // rimuovo estensione
             strncpy(temiQuiz[idx].nome, ent->d_name, MaxReadL);
             temiQuiz[idx].nome[MaxReadL-1] = '\0';
-            tabelloni[idx].nomeTema = temiQuiz[idx].nome; // puntatore condiviso
+            tabelloni[idx].nomeTema = temiQuiz[idx].nome;       // puntatore condiviso
             tabelloni[idx].head     = NULL;
             idx++;
         }
@@ -585,7 +597,7 @@ static int costruisciIndice(void) {
 // helper trim (CR, spazi, TAB, LF)
 static void trim_line(char* s){
     if (!s) return;
-    s[strcspn(s, "\n")] = '\0';        // taglia \n
+    s[strcspn(s, "\n")] = '\0';                                  // taglia \n
     size_t L = strlen(s);
     while (L>0 && (s[L-1]=='\r'||s[L-1]==' '||s[L-1]=='\t')) s[--L]='\0';
 }
@@ -605,7 +617,7 @@ static int caricaDomande(const char* percorso, struct CoppiaQ* quiz) {
         } while (domanda[0] == '\0');
 
         // Se manca il '?' finale non è un problema: la domanda viene usata “as is”
-        // (ma la UI delle domande lo prevede già nei tuoi file).
+        // (ma UI domande lo prevede nei file).
 
         // Leggi RISPOSTA (salta eventuali righe vuote)
         do {
@@ -656,7 +668,7 @@ static void stampaSezioneOnline(void) {
                     printf("    • %s  -> %u/%d%s\n",
                            tabelloni[t].nomeTema, n->punteggio, NumQuest,
                            (n->finito ? "" : " (in corso)"));
-                    break; // trovato un record per questo tema
+                    break;                      // trovato un record per questo tema
                 }
                 n = n->nxt;
             }
@@ -676,7 +688,7 @@ static void stampaSezioneClassifiche(void) {
         int pos = 1;
         while (n) {
             if (n->finito) {
-                // formatta orario locale “HH:MM:SS”
+                // formatta orario locale “Ora:Minuto:Secondo”
                 struct tm tmv;
                 char when[32];
                 localtime_r(&n->finito, &tmv);
@@ -706,7 +718,7 @@ static void stampaStato(void) {
     stampaSezioneClassifiche();
 
     // Prompt per spegnimento controllato
-    printf("Shut down del server: premi 'Q' e INVIO\n");
+    printf("\nShut down del server: premi 'Q' e INVIO\n");
     fflush(stdout);
 }
 
@@ -724,7 +736,7 @@ static void* consoleWatcher(void* _) {
             shutdown(sd_ascolto, SHUT_RDWR);
             close(sd_ascolto);
 
-            // chiude gentilmente tutte le connessioni attive
+            // chiude "gentilmente" tutte le connessioni attive
             pthread_mutex_lock(&mtx_conns);
             for (int i = 0; i < MAX_THREAD; i++) {
                 if (conn_sd_list[i] >= 0) {
@@ -735,11 +747,11 @@ static void* consoleWatcher(void* _) {
             }
             pthread_mutex_unlock(&mtx_conns);
 
-            printf("\n[Server] Shutdown richiesto. Sto terminando...\n");
+            printf("\n[Server] Shutdown richiesto. Sto terminando...\n\n");
             fflush(stdout);
 
             // Piccola attesa per permettere ai client di ricevere EOF
-            usleep(200 * 1000); // 200 ms
+            usleep(200 * 1000);                              // 200 ms
             _exit(0);
         }
     }
