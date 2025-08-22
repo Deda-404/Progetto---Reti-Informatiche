@@ -1,5 +1,5 @@
 // ============================================================================
-// Autore: de Dato A. – Matricola: 635256
+// Autore: de Dato A.
 // CLIENT – Trivia Quiz
 //
 // Funzioni chiave:

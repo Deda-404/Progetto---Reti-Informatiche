@@ -1,4 +1,4 @@
-# de Dato A. ; Matricola: 635256
+# de Dato A.
 
 clear
 gcc -g -Wall -pthread -o server server.c 

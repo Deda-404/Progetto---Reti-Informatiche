@@ -1,4 +1,4 @@
-// de Dato A. ; Matricola: 635256
+// de Dato A.
 
 #pragma once //Evito di includere più volte il file
 

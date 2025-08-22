@@ -1,5 +1,5 @@
 // ============================================================================
-// Autore: de Dato A. – Matricola: 635256
+// Autore: de Dato A.
 //
 // SERVER – Quiz a temi con:
 //  - Stampa stato (test disponibili, utenti online con test svolti, classifiche)
